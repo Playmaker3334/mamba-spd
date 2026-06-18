@@ -52,14 +52,19 @@ def build_operator_matrix(store, layer_idx):
 
 
 class OperatorDictionary(nn.Module):
-    def __init__(self, d_op, n_atoms):
+    def __init__(self, d_op, n_atoms, k):
         super().__init__()
+        self.k = k
+        self.pre_bias = nn.Parameter(torch.zeros(d_op))
         self.encoder = nn.Linear(d_op, n_atoms)
         self.decoder = nn.Linear(n_atoms, d_op, bias=False)
 
     def forward(self, o):
-        code = torch.relu(self.encoder(o))
-        recon = self.decoder(code)
+        x = o - self.pre_bias
+        acts = torch.relu(self.encoder(x))
+        topv, topi = acts.topk(self.k, dim=-1)
+        code = torch.zeros_like(acts).scatter_(-1, topi, topv)
+        recon = self.decoder(code) + self.pre_bias
         return recon, code
 
 
@@ -68,6 +73,11 @@ class DynamicOperatorDictionary:
         self.config = config
         self.dictionary = None
         self.d_op = None
+        self.mean = None
+        self.std = None
+
+    def _normalize(self, operators):
+        return (operators - self.mean) / self.std
 
     def collect_operators(self, loader, corpus, layer_idx):
         with OperatorExtractor(loader.model, layers=[layer_idx]) as ext:
@@ -78,27 +88,34 @@ class DynamicOperatorDictionary:
 
     def fit(self, operators):
         self.d_op = operators.shape[-1]
-        self.dictionary = OperatorDictionary(self.d_op, self.config.n_dynamic_atoms).to(operators.device)
+        self.mean = operators.mean(0, keepdim=True)
+        self.std = operators.std(0, keepdim=True) + 1e-6
+        x = self._normalize(operators)
+        k = getattr(self.config, "topk", 8)
+        self.dictionary = OperatorDictionary(self.d_op, self.config.n_dynamic_atoms, k).to(x.device)
         opt = optim.AdamW(self.dictionary.parameters(), lr=self.config.lr)
         history = []
         for step in range(self.config.n_steps):
-            recon, code = self.dictionary(operators)
-            mse = (recon - operators).pow(2).mean()
-            sparsity = code.abs().mean()
-            loss = mse + self.config.sparsity_coeff * sparsity
+            recon, code = self.dictionary(x)
+            mse = (recon - x).pow(2).mean()
             opt.zero_grad()
-            loss.backward()
+            mse.backward()
             opt.step()
             with torch.no_grad():
-                l0 = (code > 1e-4).float().sum(-1).mean()
-            history.append({"step": step, "loss": float(loss), "mse": float(mse), "l0": float(l0)})
+                l0 = (code > 1e-6).float().sum(-1).mean()
+            history.append({"step": step, "mse": float(mse.detach()), "l0": float(l0.detach())})
         return history
 
     def atom_usage(self, operators):
+        x = self._normalize(operators)
         with torch.no_grad():
-            _, code = self.dictionary(operators)
-        active = (code > 1e-4).float()
+            recon, code = self.dictionary(x)
+        active = (code > 1e-6).float()
+        mse = float((recon - x).pow(2).mean())
         return {
             "mean_l0": float(active.sum(-1).mean()),
-            "atom_frequency": [round(x, 4) for x in active.mean(0).tolist()],
+            "variance_explained": round(1.0 - mse, 4),
+            "recon_mse_normalized": round(mse, 4),
+            "dead_atoms": int(sum(1 for f in active.mean(0).tolist() if f < 0.01)),
+            "atom_frequency": [round(v, 4) for v in active.mean(0).tolist()],
         }
