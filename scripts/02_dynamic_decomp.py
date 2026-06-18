@@ -4,6 +4,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
+import torch
 from src import metrics
 from src.config import Config
 from src.dynamic_ops import DynamicOperatorDictionary, build_corpus_blocks
@@ -37,6 +38,9 @@ def main():
     json.dump(summary, open(config.out_dir / "run_summary.json", "w"), indent=2)
     json.dump(atoms, open(config.out_dir / "atoms.json", "w"), indent=2)
     json.dump(coact, open(config.out_dir / "coactivation.json", "w"), indent=2)
+    torch.save({"state_dict": decomp.dictionary.state_dict(), "mean": decomp.mean,
+                "std": decomp.std, "block_dims": decomp.block_dims, "layer": decomp.layer},
+               config.out_dir / "sae.pt")
     print(json.dumps(summary, indent=2))
     print("\n==== TOP 12 ATOMOS ====")
     for at in sorted([a for a in atoms if "top_tokens" in a], key=lambda x: -x["frequency"])[:12]:
