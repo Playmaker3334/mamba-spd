@@ -47,7 +47,7 @@ class AblationProbe:
         with torch.no_grad():
             return self.model(batch).logits.float()
 
-    def _atom_mask(self, eval_blocks):
+    def _atom_mask(self, eval_blocks, atom):
         with OperatorExtractor(self.model, self.layer) as ext:
             with torch.no_grad():
                 for i in range(0, eval_blocks.shape[0], self.decomp.config.batch):
@@ -61,7 +61,7 @@ class AblationProbe:
         acts = torch.relu(self.sae.encoder(x))
         v, i = acts.topk(self.sae.k, dim=-1)
         code = torch.zeros_like(acts).scatter_(-1, i, v)
-        return (code > 1e-6).cpu()
+        return (code[:, atom] > 1e-6).cpu()
 
     def run(self, eval_blocks, atom):
         handle = self.xproj.register_forward_hook(self._hook)
@@ -89,7 +89,7 @@ class AblationProbe:
         handle.remove()
         self.state["mode"] = "clean"
 
-        mask = self._atom_mask(eval_blocks).reshape(nb, sl)
+        mask = self._atom_mask(eval_blocks, atom).reshape(nb, sl)
         effect = kl_ablate
         on = mask
         off = ~mask
@@ -98,6 +98,8 @@ class AblationProbe:
         delta_nll = (nll_ablate - nll_recon)
         on_pos = mask[:, :-1]
         off_pos = ~mask[:, :-1]
+        on_eff = float(effect[on].mean()) if int(on.sum()) > 0 else 0.0
+        off_eff = float(effect[off].mean()) if int(off.sum()) > 0 else 0.0
         return {
             "atom": int(atom),
             "eval_tokens": int(nb * sl),
@@ -111,10 +113,10 @@ class AblationProbe:
             "targeted": {
                 "n_atom_active": int(on.sum()),
                 "n_atom_inactive": int(off.sum()),
-                "kl_effect_on_atom_tokens": round(float(effect[on].mean()), 6),
-                "kl_effect_off_atom_tokens": round(float(effect[off].mean()), 6),
-                "specificity_ratio": round(float(effect[on].mean()) / (float(effect[off].mean()) + 1e-9), 3),
-                "delta_nll_on_atom_tokens": round(float(delta_nll[on_pos].mean()), 6),
-                "delta_nll_off_atom_tokens": round(float(delta_nll[off_pos].mean()), 6),
+                "kl_effect_on_atom_tokens": round(on_eff, 6),
+                "kl_effect_off_atom_tokens": round(off_eff, 6),
+                "specificity_ratio": round(on_eff / (off_eff + 1e-9), 3),
+                "delta_nll_on_atom_tokens": round(float(delta_nll[on_pos].mean()) if int(on_pos.sum()) > 0 else 0.0, 6),
+                "delta_nll_off_atom_tokens": round(float(delta_nll[off_pos].mean()) if int(off_pos.sum()) > 0 else 0.0, 6),
             },
         }
