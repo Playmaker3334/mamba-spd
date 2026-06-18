@@ -12,6 +12,7 @@ class MambaLoader:
         self.model = AutoModelForCausalLM.from_pretrained(
             config.model_id, dtype=_DTYPES[config.dtype]
         ).to(config.device)
+        self.model.lm_head.weight = self.model.get_input_embeddings().weight
         self.model.eval()
         for p in self.model.parameters():
             p.requires_grad = False
