@@ -16,15 +16,12 @@ class OperatorExtractor:
         keep = self.layers
         orig = self._orig
 
-        def patched(mixer, input_states, cache_params=None, attention_mask=None):
+        def patched(mixer, *args, **kwargs):
+            input_states = args[0] if args else kwargs["input_states"]
             _, seq_len, _ = input_states.shape
             projected = mixer.in_proj(input_states).transpose(1, 2)
             hidden_states, gate = projected.chunk(2, dim=1)
-            if attention_mask is not None:
-                hidden_states = hidden_states * attention_mask.unsqueeze(1)
             hidden_states = mixer.act(mixer.conv1d(hidden_states)[..., :seq_len])
-            if attention_mask is not None:
-                hidden_states = hidden_states * attention_mask.unsqueeze(1)
             ssm_parameters = mixer.x_proj(hidden_states.transpose(1, 2))
             time_step, B, C = torch.split(
                 ssm_parameters,
@@ -37,7 +34,7 @@ class OperatorExtractor:
                 rec["delta"].append(discrete_time_step.detach().cpu())
                 rec["B"].append(B.detach().cpu())
                 rec["C"].append(C.detach().cpu())
-            return orig(mixer, input_states, cache_params, attention_mask)
+            return orig(mixer, *args, **kwargs)
 
         MambaMixer.slow_forward = patched
         return self
