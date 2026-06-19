@@ -9,23 +9,27 @@ class OperatorExtractor:
         self.model = model
         self.layer = layer
         self.store = {"ts": [], "B": [], "C": [], "dmag": []}
+        self.n_calls = 0
 
     def __enter__(self):
         self._orig = MambaMixer.slow_forward
         store = self.store
         layer = self.layer
         orig = self._orig
+        ext = self
+        self.n_calls = 0
 
         def patched(mixer, *args, **kwargs):
-            x = args[0] if args else kwargs["input_states"]
-            _, seq_len, _ = x.shape
-            proj = mixer.in_proj(x).transpose(1, 2)
-            hs, gate = proj.chunk(2, dim=1)
-            hs = mixer.act(mixer.conv1d(hs)[..., :seq_len])
-            ssm = mixer.x_proj(hs.transpose(1, 2))
-            ts, B, C = torch.split(ssm, [mixer.time_step_rank, mixer.ssm_state_size, mixer.ssm_state_size], dim=-1)
-            dmag = nn.functional.softplus(mixer.dt_proj(ts).float()).mean(-1)
             if mixer.layer_idx == layer:
+                ext.n_calls += 1
+                x = args[0] if args else kwargs["input_states"]
+                _, seq_len, _ = x.shape
+                proj = mixer.in_proj(x).transpose(1, 2)
+                hs, gate = proj.chunk(2, dim=1)
+                hs = mixer.act(mixer.conv1d(hs)[..., :seq_len])
+                ssm = mixer.x_proj(hs.transpose(1, 2))
+                ts, B, C = torch.split(ssm, [mixer.time_step_rank, mixer.ssm_state_size, mixer.ssm_state_size], dim=-1)
+                dmag = nn.functional.softplus(mixer.dt_proj(ts).float()).mean(-1)
                 store["ts"].append(ts.float().detach().cpu())
                 store["B"].append(B.float().detach().cpu())
                 store["C"].append(C.float().detach().cpu())
@@ -90,8 +94,16 @@ class DynamicOperatorDictionary:
         layer = self.config.layer if self.config.layer is not None else loader.model.config.num_hidden_layers // 2
         with OperatorExtractor(loader.model, layer) as ext:
             with torch.no_grad():
-                for i in range(0, blocks.shape[0], self.config.batch):
+                for bi, i in enumerate(range(0, blocks.shape[0], self.config.batch)):
                     loader.model(blocks[i:i + self.config.batch].to(self.config.device))
+                    if bi == 0 and ext.n_calls == 0:
+                        raise RuntimeError(
+                            "OperatorExtractor no capturó ningún operador: "
+                            "MambaMixer.slow_forward no fue invocado. Es probable que los "
+                            "kernels rápidos (mamba_ssm / causal_conv1d) estén instalados y "
+                            "que el forward se enrute por cuda_kernels_forward. "
+                            "Desinstálalos para forzar el camino lento."
+                        )
         ts = torch.cat([x.reshape(-1, x.shape[-1]) for x in ext.store["ts"]], 0)
         B = torch.cat([x.reshape(-1, x.shape[-1]) for x in ext.store["B"]], 0)
         C = torch.cat([x.reshape(-1, x.shape[-1]) for x in ext.store["C"]], 0)
