@@ -54,7 +54,7 @@ def main():
     # vocabulario completo: eval (validacion) puede contener ids > max(train)
     V = model.config.vocab_size
     raws = tok.convert_ids_to_tokens(list(range(V)))
-    cat_of_id = [categorize_token(r) for r in raws]
+    cat_of_id = [categorize_token(r) if r is not None else "other" for r in raws]
     counts = torch.bincount(train_blocks.reshape(-1), minlength=V).float()
 
     ik.install()
