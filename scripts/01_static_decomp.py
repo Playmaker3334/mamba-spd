@@ -15,7 +15,7 @@ def make_sampler(loader, config):
     vocab = loader.model.config.vocab_size
 
     def sample():
-        return torch.randint(0, vocab, (config.batch_size, config.seq_len), device=config.device)
+        return torch.randint(0, vocab, (config.batch, config.max_len), device=config.device)
 
     return sample
 

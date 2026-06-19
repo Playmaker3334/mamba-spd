@@ -1,6 +1,11 @@
 import torch
 
 
+def l0_per_token(ci_dict, threshold=0.0):
+    stacked = torch.cat([ci_dict[n] for n in ci_dict], dim=-1)
+    return float((stacked > threshold).float().sum(-1).mean())
+
+
 def pca_baseline(descriptor):
     Xn = (descriptor - descriptor.mean(0)) / (descriptor.std(0) + 1e-6)
     S = torch.linalg.svdvals(Xn - Xn.mean(0))

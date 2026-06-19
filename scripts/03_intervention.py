@@ -18,7 +18,7 @@ def main():
     decomposer = StaticDecomposer(loader, config)
     ablator = OperatorAblator(decomposer)
     vocab = loader.model.config.vocab_size
-    batch = torch.randint(0, vocab, (config.batch_size, config.seq_len), device=config.device)
+    batch = torch.randint(0, vocab, (config.batch, config.max_len), device=config.device)
     layer = list(decomposer.components.keys())[0]
     deltas = {str(i): ablator.ablate_component(batch, layer, i) for i in range(config.n_components)}
     with open(config.metrics_dir / "intervention.json", "w") as f:
