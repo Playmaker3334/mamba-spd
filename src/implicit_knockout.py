@@ -12,8 +12,8 @@ def _knockout_slow_forward(mixer, *args, **kwargs):
     else:
         input_states = kwargs["input_states"]
     attention_mask = kwargs.get("attention_mask", None)
-    if attention_mask is None and len(args) >= 3:
-        attention_mask = args[2]
+    if attention_mask is None and len(args) >= 4:
+        attention_mask = args[3]
 
     batch_size, seq_len, _ = input_states.shape
     dtype = input_states.dtype
