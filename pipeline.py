@@ -63,6 +63,7 @@ def main():
         "06_delta_forgetting.py",
         "07_depth_profile.py",
         "05_dynamic_ablation.py",
+        "08_implicit_knockout.py",
     ]
     static = [
         "01_static_decomp.py",
